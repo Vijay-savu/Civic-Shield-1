@@ -8,6 +8,7 @@ const auditRoutes = require("../modules/audit/audit.routes");
 const alertsRoutes = require("../modules/alerts/alerts.routes");
 const adminRoutes = require("../modules/admin/admin.routes");
 const tamperRoutes = require("../modules/tamper/tamper.routes");
+const applicationRoutes = require("../modules/application/application.routes");
 const demoRoutes = require("../modules/demo/demo.routes");
 const { authenticateToken } = require("../middlewares/auth.middleware");
 
@@ -24,6 +25,7 @@ router.use("/audit", auditRoutes);
 router.use("/alerts", alertsRoutes);
 router.use("/admin", adminRoutes);
 router.use("/demo", demoRoutes);
+router.use("/applications", applicationRoutes);
 router.use("/", tamperRoutes);
 
 module.exports = router;

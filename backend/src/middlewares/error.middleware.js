@@ -22,6 +22,10 @@ function errorHandler(error, _req, res, _next) {
 
   const statusCode = error.statusCode || 500;
   const riskScore = error.riskScore || undefined;
+  const retryAfterSeconds = Number.isFinite(Number(error.retryAfterSeconds))
+    ? Number(error.retryAfterSeconds)
+    : undefined;
+  const blockedUntil = error.blockedUntil || undefined;
 
   if (statusCode >= 500) {
     return res.status(statusCode).json({
@@ -40,6 +44,8 @@ function errorHandler(error, _req, res, _next) {
     reason: error.reason || "request_rejected",
     message: error.message || "Request failed",
     riskScore,
+    retryAfterSeconds,
+    blockedUntil,
   });
 }
 

@@ -2,43 +2,11 @@ import { useEffect, useState } from "react";
 import { FiLock } from "react-icons/fi";
 import { getAdminLogs, getErrorMessage } from "../services/api";
 
-function formatDate(dateValue) {
-  if (!dateValue) return "-";
-  return new Date(dateValue).toLocaleString();
-}
-
-function LogSection({ title, rows }) {
+function MetricCard({ title, value, accent }) {
   return (
-    <div className="card">
-      <h3>{title}</h3>
-      {rows?.length ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Action</th>
-                <th>Outcome</th>
-                <th>Actor</th>
-                <th>Reason</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row._id}>
-                  <td>{row.action}</td>
-                  <td>{row.outcome}</td>
-                  <td>{row.actorEmail || "-"}</td>
-                  <td>{row.metadata?.reason || row.metadata?.status || "-"}</td>
-                  <td>{formatDate(row.createdAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="muted">No data</p>
-      )}
+    <div className="card metric">
+      <span className="section-title">{title}</span>
+      <h2 style={{ margin: "8px 0 0", fontSize: "3rem", color: accent || "#0f2d56" }}>{value}</h2>
     </div>
   );
 }
@@ -65,54 +33,70 @@ export default function AdminLogsPage() {
     load();
   }, []);
 
+  const metrics = data?.metrics || {};
+  const schemeStats = data?.schemeStats || [];
+
   return (
     <div className="page-stack">
-      <h1><FiLock /> Admin Logs</h1>
-      <p className="muted">Aggregated view for login attempts, uploads, tampering, and alerts.</p>
+      <h1><FiLock /> Admin Overview</h1>
+      <p className="muted">Admin can view only aggregate platform stats: registrations, applications, and eligibility outcomes.</p>
 
       <div className="card">
-        <button className="btn" type="button" onClick={load}>Refresh Logs</button>
-        {loading && <p className="muted">Loading logs...</p>}
+        <button className="btn" type="button" onClick={load}>Refresh Overview</button>
+        {loading && <p className="muted">Loading overview...</p>}
         {error && <p className="error-text">{error}</p>}
       </div>
 
       {data && (
-        <div className="grid two">
-          <LogSection title="Login Attempts" rows={data.loginAttempts} />
-          <LogSection title="Uploads" rows={data.uploads} />
-          <LogSection title="Tampering" rows={data.tampering} />
+        <>
+          <div className="grid four">
+            <MetricCard title="Registered Users" value={metrics.totalRegisteredUsers || 0} />
+            <MetricCard title="Registered Citizens" value={metrics.registeredCitizens || 0} />
+            <MetricCard title="Total Applications" value={metrics.totalApplications || 0} />
+            <MetricCard title="Eligible" value={metrics.eligibleApplications || 0} accent="#1f8b61" />
+          </div>
+
+          <div className="grid four">
+            <MetricCard title="Not Eligible" value={metrics.notEligibleApplications || 0} accent="#c04b22" />
+            <MetricCard title="Needs Review" value={metrics.pendingReviewApplications || 0} accent="#9d7800" />
+            <MetricCard title="Suspicious" value={metrics.suspiciousApplications || 0} accent="#cc2f3d" />
+            <MetricCard title="Admins" value={metrics.registeredAdmins || 0} />
+          </div>
+
           <div className="card">
-            <h3>Alerts</h3>
-            {data.alerts?.length ? (
+            <h3>Scheme-wise Summary</h3>
+            {schemeStats.length ? (
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>Type</th>
-                      <th>Risk</th>
-                      <th>Status</th>
-                      <th>Message</th>
-                      <th>Time</th>
+                      <th>Scheme</th>
+                      <th>Total</th>
+                      <th>Eligible</th>
+                      <th>Not Eligible</th>
+                      <th>Needs Review</th>
+                      <th>Suspicious</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.alerts.map((alert) => (
-                      <tr key={alert._id}>
-                        <td>{alert.type}</td>
-                        <td>{alert.riskScore}</td>
-                        <td>{alert.status}</td>
-                        <td>{alert.message}</td>
-                        <td>{formatDate(alert.createdAt)}</td>
+                    {schemeStats.map((row) => (
+                      <tr key={row.schemeName}>
+                        <td>{row.schemeName}</td>
+                        <td>{row.total}</td>
+                        <td>{row.eligible}</td>
+                        <td>{row.notEligible}</td>
+                        <td>{row.needsReview}</td>
+                        <td>{row.suspicious}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             ) : (
-              <p className="muted">No alerts</p>
+              <p className="muted">No applications submitted yet.</p>
             )}
           </div>
-        </div>
+        </>
       )}
     </div>
   );

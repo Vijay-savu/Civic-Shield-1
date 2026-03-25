@@ -31,43 +31,36 @@ export default function AlertsPage() {
 
   return (
     <div className="page-stack">
-      <h1><FiAlertTriangle /> Alerts</h1>
-      <p className="muted">Live alert feed for failed logins, rate-limit, and tampering.</p>
-
       <div className="card">
-        <button className="btn" type="button" onClick={loadAlerts}>Refresh Alerts</button>
-
-        {loading && <p className="muted">Loading alerts...</p>}
-        {error && <p className="error-text">{error}</p>}
-
-        {!loading && !error && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>Risk</th>
-                  <th>Status</th>
-                  <th>Message</th>
-                  <th>Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {alerts.map((alert) => (
-                  <tr key={alert._id}>
-                    <td>{alert.type}</td>
-                    <td>{alert.riskScore}</td>
-                    <td>{alert.status}</td>
-                    <td>{alert.message}</td>
-                    <td>{formatDate(alert.createdAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {alerts.length === 0 && <p className="muted">No alerts found.</p>}
-          </div>
-        )}
+        <h1 style={{ margin: "0 0 8px" }}><FiAlertTriangle /> Security Alerts</h1>
+        <p className="muted">If this activity is not yours, contact support and avoid uploading new documents.</p>
+        <button className="btn btn-outline" type="button" onClick={loadAlerts}>Refresh Alerts</button>
       </div>
+
+      {loading && <p className="muted">Loading alerts...</p>}
+      {error && <p className="error-text">{error}</p>}
+
+      {!loading && !error && (
+        <>
+          {alerts.map((alert) => (
+            <div key={alert._id} className="card" style={{ background: alert.riskScore === "High" ? "#fff2f4" : "#fffdee" }}>
+              <div className="scheme-status-row">
+                <span className="section-title">{String(alert.type || "alert").replace(/_/g, " ")}</span>
+                <span className={`pill ${alert.riskScore === "High" ? "warn" : "active"}`}>{alert.riskScore}</span>
+              </div>
+              <h3 style={{ margin: "10px 0 8px", fontSize: "2rem" }}>{alert.message}</h3>
+              <p className="muted" style={{ margin: 0 }}>Status: {alert.status}</p>
+              <p className="muted" style={{ margin: "6px 0 0" }}>{formatDate(alert.createdAt)}</p>
+            </div>
+          ))}
+
+          {alerts.length === 0 && (
+            <div className="card">
+              <p className="muted">No alerts found.</p>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

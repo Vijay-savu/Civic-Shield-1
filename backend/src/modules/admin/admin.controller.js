@@ -1,9 +1,8 @@
-const { getAdminLogsData } = require("./admin.service");
+const { getAdminOverviewData } = require("./admin.service");
 
 async function getAdminLogs(req, res, next) {
   try {
-    const data = await getAdminLogsData({
-      limit: req.query.limit,
+    const data = await getAdminOverviewData({
       requester: req.user,
     });
 

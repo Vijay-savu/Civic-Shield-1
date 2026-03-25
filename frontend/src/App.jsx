@@ -9,10 +9,11 @@ import EligibilityPage from "./pages/EligibilityPage";
 import MyApplicationsPage from "./pages/MyApplicationsPage";
 import AlertsPage from "./pages/AlertsPage";
 import AdminLogsPage from "./pages/AdminLogsPage";
+import AdminApplicationsPage from "./pages/AdminApplicationsPage";
 
-function ProtectedLayout({ children, adminOnly = false }) {
+function ProtectedLayout({ children, adminOnly = false, citizenOnly = false }) {
   return (
-    <ProtectedRoute adminOnly={adminOnly}>
+    <ProtectedRoute adminOnly={adminOnly} citizenOnly={citizenOnly}>
       <Layout>{children}</Layout>
     </ProtectedRoute>
   );
@@ -35,7 +36,7 @@ export default function App() {
       <Route
         path="/upload"
         element={
-          <ProtectedLayout>
+          <ProtectedLayout citizenOnly>
             <UploadPage />
           </ProtectedLayout>
         }
@@ -43,7 +44,7 @@ export default function App() {
       <Route
         path="/eligibility"
         element={
-          <ProtectedLayout>
+          <ProtectedLayout citizenOnly>
             <EligibilityPage />
           </ProtectedLayout>
         }
@@ -51,7 +52,7 @@ export default function App() {
       <Route
         path="/applications"
         element={
-          <ProtectedLayout>
+          <ProtectedLayout citizenOnly>
             <MyApplicationsPage />
           </ProtectedLayout>
         }
@@ -61,6 +62,14 @@ export default function App() {
         element={
           <ProtectedLayout>
             <AlertsPage />
+          </ProtectedLayout>
+        }
+      />
+      <Route
+        path="/admin/applications"
+        element={
+          <ProtectedLayout adminOnly>
+            <AdminApplicationsPage />
           </ProtectedLayout>
         }
       />

@@ -16,6 +16,13 @@ const loginRateLimiter = rateLimit({
   skipSuccessfulRequests: true,
   handler: (req, res) => {
     const email = String(req.body?.email || "").toLowerCase().trim() || null;
+    const now = Date.now();
+    const resetAtMs = Number(new Date(req.rateLimit?.resetTime || now + loginRateLimitWindowMinutes * 60 * 1000));
+    const retryAfterSeconds = Math.max(1, Math.ceil((resetAtMs - now) / 1000));
+    const retryAfterMinutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+    const blockedUntil = new Date(now + retryAfterSeconds * 1000).toISOString();
+
+    res.set("Retry-After", String(retryAfterSeconds));
 
     safeCreateRateLimitAlert({
       type: "rate_limit_exceeded",
@@ -36,7 +43,9 @@ const loginRateLimiter = rateLimit({
       status: "blocked",
       reason: "rate_limit_exceeded",
       riskScore: "High",
-      message: `Too many login attempts. Try again after ${loginRateLimitWindowMinutes} minutes.`,
+      message: `Too many login attempts. Try again after ${retryAfterMinutes} minutes.`,
+      retryAfterSeconds,
+      blockedUntil,
     });
   },
 });

@@ -42,7 +42,7 @@ export default function MyApplicationsPage() {
     <div className="page-stack">
       {error && <p className="error-text">{error}</p>}
 
-      <div className="grid three" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+      <div className="grid four">
         <div className="card metric">
           <span className="section-title">Applications</span>
           <h2 style={{ margin: "8px 0 0", fontSize: "3rem" }}>{summary.applications || 0}</h2>

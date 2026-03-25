@@ -7,7 +7,7 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("civicshield_token");
+  const token = sessionStorage.getItem("civicshield_token");
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -56,6 +56,16 @@ export async function uploadDocument({ file, documentType, ocrHint = "" }) {
   return data;
 }
 
+export async function getMyDocuments() {
+  const { data } = await api.get("/documents/mine");
+  return data;
+}
+
+export async function deleteDocument(documentId) {
+  const { data } = await api.delete(`/documents/${documentId}`);
+  return data;
+}
+
 export async function checkEligibility(documentId) {
   const { data } = await api.post(`/verification/check/${documentId}`);
   return data;
@@ -83,6 +93,36 @@ export async function simulateFailedLogin(payload) {
 
 export async function simulateTampering(documentId) {
   const { data } = await api.post(`/demo/simulate-tampering/${documentId}`);
+  return data;
+}
+
+export async function getLoanRequirements() {
+  const { data } = await api.get("/applications/requirements");
+  return data;
+}
+
+export async function createLoanApplication(payload) {
+  const { data } = await api.post("/applications", payload);
+  return data;
+}
+
+export async function getMyApplications() {
+  const { data } = await api.get("/applications/mine");
+  return data;
+}
+
+export async function getMyApplicationSummary() {
+  const { data } = await api.get("/applications/summary");
+  return data;
+}
+
+export async function getAdminApplications(params = {}) {
+  const { data } = await api.get("/applications/admin/list", { params });
+  return data;
+}
+
+export async function reviewAdminApplication(applicationId, payload) {
+  const { data } = await api.patch(`/applications/admin/${applicationId}/review`, payload);
   return data;
 }
 

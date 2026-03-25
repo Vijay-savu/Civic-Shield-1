@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { getErrorMessage, getMyApplicationSummary, getMyApplications } from "../services/api";
+import { useAuth } from "../context/AuthContext";
+import {
+  getAdminLogs,
+  getErrorMessage,
+  getMyApplicationSummary,
+  getMyApplications,
+} from "../services/api";
 
 function formatDate(value) {
   if (!value) return "-";
@@ -8,6 +14,7 @@ function formatDate(value) {
 }
 
 export default function DashboardPage() {
+  const { isAdmin } = useAuth();
   const [summary, setSummary] = useState({
     applications: 0,
     eligible: 0,
@@ -17,18 +24,41 @@ export default function DashboardPage() {
     latestStatus: "None",
     lastSubmitted: null,
   });
+  const [adminMetrics, setAdminMetrics] = useState({
+    totalRegisteredUsers: 0,
+    registeredCitizens: 0,
+    totalApplications: 0,
+    eligibleApplications: 0,
+    notEligibleApplications: 0,
+    pendingReviewApplications: 0,
+    suspiciousApplications: 0,
+  });
   const [applications, setApplications] = useState([]);
   const [error, setError] = useState("");
+
+  const loadCitizen = async () => {
+    const [summaryRes, applicationsRes] = await Promise.all([
+      getMyApplicationSummary(),
+      getMyApplications(),
+    ]);
+    setSummary(summaryRes.data || {});
+    setApplications(applicationsRes.data || []);
+  };
+
+  const loadAdmin = async () => {
+    const overviewRes = await getAdminLogs();
+    setAdminMetrics(overviewRes.data?.metrics || {});
+    setApplications([]);
+  };
 
   const load = async () => {
     setError("");
     try {
-      const [summaryRes, applicationsRes] = await Promise.all([
-        getMyApplicationSummary(),
-        getMyApplications(),
-      ]);
-      setSummary(summaryRes.data || {});
-      setApplications(applicationsRes.data || []);
+      if (isAdmin) {
+        await loadAdmin();
+      } else {
+        await loadCitizen();
+      }
     } catch (err) {
       setError(getErrorMessage(err));
     }
@@ -36,15 +66,98 @@ export default function DashboardPage() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [isAdmin]);
 
   const recentApplications = useMemo(() => applications.slice(0, 3), [applications]);
+
+  if (isAdmin) {
+    return (
+      <div className="page-stack">
+        {error && <p className="error-text">{error}</p>}
+
+        <div className="card">
+          <h1 style={{ margin: 0 }}>Admin Dashboard</h1>
+          <p className="muted" style={{ margin: "10px 0 0" }}>
+            Admin view is focused on platform oversight and application decisions.
+          </p>
+        </div>
+
+        <div className="grid four">
+          <div className="card metric">
+            <span className="section-title">Applications</span>
+            <h2 style={{ margin: "8px 0 0", fontSize: "3rem" }}>{adminMetrics.totalApplications || 0}</h2>
+          </div>
+          <div className="card metric">
+            <span className="section-title">Needs Review</span>
+            <h2 style={{ margin: "8px 0 0", fontSize: "3rem", color: "#9d7800" }}>
+              {adminMetrics.pendingReviewApplications || 0}
+            </h2>
+          </div>
+          <div className="card metric">
+            <span className="section-title">Eligible</span>
+            <h2 style={{ margin: "8px 0 0", fontSize: "3rem", color: "#1f8b61" }}>
+              {adminMetrics.eligibleApplications || 0}
+            </h2>
+          </div>
+          <div className="card metric">
+            <span className="section-title">Not Eligible</span>
+            <h2 style={{ margin: "8px 0 0", fontSize: "3rem", color: "#c04b22" }}>
+              {adminMetrics.notEligibleApplications || 0}
+            </h2>
+          </div>
+        </div>
+
+        <div className="grid two">
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>Admin Actions</h3>
+            <p className="muted">Review applications and decide accept/deny with reason.</p>
+            <div className="grid two" style={{ marginTop: "10px" }}>
+              <Link to="/admin/applications" className="btn">Open Applications</Link>
+              <Link to="/admin/logs" className="btn btn-outline">Open Overview</Link>
+              <Link to="/alerts" className="btn btn-outline">Security Alerts</Link>
+              <button type="button" className="btn btn-outline" onClick={load}>Refresh Dashboard</button>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3 style={{ marginTop: 0 }}>Registered Users</h3>
+            <div className="grid two" style={{ marginTop: "10px" }}>
+              <div className="status-box">
+                <span className="section-title">Total Users</span>
+                <p style={{ marginTop: "8px", fontSize: "1.5rem", fontWeight: 700 }}>
+                  {adminMetrics.totalRegisteredUsers || 0}
+                </p>
+              </div>
+              <div className="status-box">
+                <span className="section-title">Citizens</span>
+                <p style={{ marginTop: "8px", fontSize: "1.5rem", fontWeight: 700 }}>
+                  {adminMetrics.registeredCitizens || 0}
+                </p>
+              </div>
+              <div className="status-box">
+                <span className="section-title">Suspicious</span>
+                <p style={{ marginTop: "8px", fontSize: "1.5rem", fontWeight: 700, color: "#cc2f3d" }}>
+                  {adminMetrics.suspiciousApplications || 0}
+                </p>
+              </div>
+              <div className="status-box">
+                <span className="section-title">Pending Review</span>
+                <p style={{ marginTop: "8px", fontSize: "1.5rem", fontWeight: 700, color: "#9d7800" }}>
+                  {adminMetrics.pendingReviewApplications || 0}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page-stack">
       {error && <p className="error-text">{error}</p>}
 
-      <div className="grid three" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+      <div className="grid four">
         <div className="card metric">
           <span className="section-title">Applications</span>
           <h2 style={{ margin: "8px 0 0", fontSize: "3rem" }}>{summary.applications || 0}</h2>

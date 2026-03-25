@@ -2,13 +2,19 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { FiLogOut } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
 
-const navItems = [
+const citizenNavItems = [
   { to: "/dashboard", label: "Dashboard" },
   { to: "/upload", label: "My Documents" },
   { to: "/eligibility", label: "Apply for Schemes" },
   { to: "/applications", label: "My Applications" },
   { to: "/alerts", label: "Security Alerts" },
-  { to: "/admin/logs", label: "Admin Overview", adminOnly: true },
+];
+
+const adminNavItems = [
+  { to: "/dashboard", label: "Dashboard" },
+  { to: "/admin/applications", label: "Applications" },
+  { to: "/admin/logs", label: "Admin Overview" },
+  { to: "/alerts", label: "Security Alerts" },
 ];
 
 export default function Layout({ children }) {
@@ -19,6 +25,8 @@ export default function Layout({ children }) {
     clearSession();
     navigate("/login");
   };
+
+  const navItems = isAdmin ? adminNavItems : citizenNavItems;
 
   return (
     <div className="app-shell">
@@ -33,17 +41,15 @@ export default function Layout({ children }) {
           </div>
 
           <nav className="top-nav-list">
-            {navItems
-              .filter((item) => !item.adminOnly || isAdmin)
-              .map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) => `top-nav-item ${isActive ? "active" : ""}`}
-                >
-                  {item.label}
-                </NavLink>
-              ))}
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) => `top-nav-item ${isActive ? "active" : ""}`}
+              >
+                {item.label}
+              </NavLink>
+            ))}
           </nav>
 
           <div className="top-nav-actions">
