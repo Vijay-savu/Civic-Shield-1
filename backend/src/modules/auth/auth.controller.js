@@ -27,12 +27,11 @@ async function login(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      status: "otp_required",
-      reason: "password_verified",
+      status: result.status,
+      reason: result.reason,
       data: {
-        email: result.email,
-        otpPreview: result.otpPreview,
-        riskScore: result.riskScore,
+        token: result.token,
+        user: result.user,
       },
     });
   } catch (error) {

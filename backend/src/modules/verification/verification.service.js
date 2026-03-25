@@ -17,6 +17,10 @@ async function evaluateEligibility({ documentId, requester, ipAddress }) {
 
   if (integrity.integrityStatus === "compromised") {
     reason = "tampering_detected";
+  } else if (document.documentType !== "income_certificate") {
+    reason = "income_certificate_required";
+  } else if (document.validationStatus !== "valid") {
+    reason = "invalid_income_document";
   } else if (typeof document.extractedIncome !== "number") {
     reason = "income_not_available";
   } else if (document.extractedIncome < eligibilityIncomeThreshold) {

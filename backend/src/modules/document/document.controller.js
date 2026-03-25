@@ -18,12 +18,16 @@ async function uploadDocument(req, res, next) {
     const result = await uploadDocumentForUser({
       file: req.file,
       userId: req.user.sub,
+      documentType: req.body?.documentType,
+      ocrHint: req.body?.ocrHint,
     });
 
     monitor("uploads", {
       actorEmail: req.user.email,
       status: result.status,
       reason: result.reason,
+      documentType: result.documentType,
+      validationStatus: result.validationStatus,
       ipAddress: req.ip,
     });
 
@@ -40,6 +44,10 @@ async function uploadDocument(req, res, next) {
       metadata: {
         status: result.status,
         reason: result.reason,
+        documentType: result.documentType,
+        validationStatus: result.validationStatus,
+        validationReason: result.validationReason,
+        ocrStatus: result.ocrStatus,
       },
     });
 

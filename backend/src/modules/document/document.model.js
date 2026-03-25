@@ -31,14 +31,38 @@ const documentSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    documentType: {
+      type: String,
+      enum: [
+        "aadhaar_card",
+        "pan_card",
+        "birth_certificate",
+        "driving_licence",
+        "income_certificate",
+      ],
+      required: true,
+    },
     extractedIncome: {
       type: Number,
       default: null,
+    },
+    extractedFields: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
     ocrStatus: {
       type: String,
       enum: ["extracted", "not_found", "failed"],
       default: "not_found",
+    },
+    validationStatus: {
+      type: String,
+      enum: ["valid", "invalid"],
+      default: "invalid",
+    },
+    validationReason: {
+      type: String,
+      default: "document_needs_review",
     },
   },
   { timestamps: true }

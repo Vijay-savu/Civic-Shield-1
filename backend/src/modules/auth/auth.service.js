@@ -7,7 +7,16 @@ const { logAuditAction } = require("../audit/audit.service");
 const { createAlert } = require("../alerts/alerts.service");
 const { calculateRiskScore } = require("../../utils/risk.util");
 const { monitor } = require("../../utils/monitor.util");
-const { jwtSecret, jwtExpiresIn, otpExpiryMinutes, nodeEnv } = require("../../config/env");
+const {
+  jwtSecret,
+  jwtExpiresIn,
+  otpExpiryMinutes,
+  demoFixedOtp,
+  demoLoginEmail,
+  demoLoginPassword,
+  demoLoginRole,
+  nodeEnv,
+} = require("../../config/env");
 
 function hashOtp(otp) {
   return crypto.createHash("sha256").update(otp).digest("hex");
@@ -21,6 +30,31 @@ function normalizeRole(role) {
   return String(role || "citizen").toLowerCase() === "admin" ? "admin" : "citizen";
 }
 
+async function ensureDemoCredentialsUser(email) {
+  const normalizedDemoEmail = String(demoLoginEmail || "").toLowerCase().trim();
+
+  if (nodeEnv === "production" || email !== normalizedDemoEmail) {
+    return;
+  }
+
+  const role = normalizeRole(demoLoginRole);
+  const passwordHash = await bcrypt.hash(String(demoLoginPassword || "123456"), 12);
+
+  const existingUser = await User.findOne({ email });
+
+  if (!existingUser) {
+    await User.create({
+      email,
+      passwordHash,
+      role,
+    });
+    return;
+  }
+
+  existingUser.passwordHash = passwordHash;
+  existingUser.role = role;
+  await existingUser.save();
+}
 async function safeAudit(payload) {
   try {
     await logAuditAction(payload);
@@ -112,6 +146,7 @@ async function loginWithPassword({ email, password, ipAddress, userAgent }) {
   }
 
   const normalizedEmail = email.toLowerCase().trim();
+  await ensureDemoCredentialsUser(normalizedEmail);
   const user = await User.findOne({ email: normalizedEmail });
 
   if (!user) {
@@ -178,38 +213,54 @@ async function loginWithPassword({ email, password, ipAddress, userAgent }) {
     throw error;
   }
 
-  const otpCode = generateOtpCode();
-  user.otpHash = hashOtp(otpCode);
-  user.otpExpiresAt = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
+  user.otpHash = null;
+  user.otpExpiresAt = null;
   user.otpAttempts = 0;
+  user.failedLoginCount = 0;
+  user.riskScore = "Low";
+  user.lastLoginAt = new Date();
   await user.save();
 
-  monitor("otp", {
+  const normalizedRole = normalizeRole(user.role);
+
+  const token = jwt.sign(
+    {
+      sub: user._id.toString(),
+      email: user.email,
+      role: normalizedRole,
+      riskScore: user.riskScore,
+    },
+    jwtSecret,
+    { expiresIn: jwtExpiresIn }
+  );
+
+  monitor("login", {
     email: user.email,
-    status: "generated",
+    status: "success",
+    reason: "password_verified",
     riskScore: user.riskScore,
     ipAddress,
   });
 
   await safeAudit({
     action: "login",
-    outcome: "info",
+    outcome: "success",
     actorId: user._id,
     actorEmail: user.email,
-    actorRole: normalizeRole(user.role),
+    actorRole: normalizedRole,
     ipAddress,
     userAgent,
     metadata: {
-      stage: "otp_generated",
+      stage: "direct_login",
       riskScore: user.riskScore,
     },
   });
 
   return {
-    message: "OTP generated. Verify OTP to complete login.",
-    email: user.email,
-    otpPreview: nodeEnv !== "production" ? otpCode : undefined,
-    riskScore: user.riskScore,
+    token,
+    user: sanitizeUser(user),
+    status: "authenticated",
+    reason: "password_verified",
   };
 }
 
@@ -222,6 +273,7 @@ async function verifyOtpAndIssueToken({ email, otp, ipAddress, userAgent }) {
   }
 
   const normalizedEmail = email.toLowerCase().trim();
+  await ensureDemoCredentialsUser(normalizedEmail);
   const user = await User.findOne({ email: normalizedEmail });
 
   if (!user || !user.otpHash || !user.otpExpiresAt) {
@@ -313,7 +365,9 @@ async function verifyOtpAndIssueToken({ email, otp, ipAddress, userAgent }) {
     throw error;
   }
 
-  const isOtpValid = hashOtp(String(otp).trim()) === user.otpHash;
+  const submittedOtp = String(otp).trim();
+  const isDemoOtp = nodeEnv !== "production" && submittedOtp === String(demoFixedOtp);
+  const isOtpValid = isDemoOtp || hashOtp(submittedOtp) === user.otpHash;
   if (!isOtpValid) {
     user.otpAttempts += 1;
     user.failedLoginCount += 1;
@@ -422,3 +476,7 @@ module.exports = {
   verifyOtpAndIssueToken,
   getCurrentUser,
 };
+
+
+
+
