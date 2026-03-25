@@ -8,5 +8,9 @@ module.exports = {
   jwtSecret: process.env.JWT_SECRET || "replace-with-a-strong-secret",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "1h",
   otpExpiryMinutes: Number(process.env.OTP_EXPIRY_MINUTES || 5),
+  loginRateLimitMax: Number(process.env.LOGIN_RATE_LIMIT_MAX || 5),
+  loginRateLimitWindowMinutes: Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MINUTES || 15),
+  maxUploadSizeMb: Number(process.env.MAX_UPLOAD_SIZE_MB || 5),
+  uploadDir: process.env.UPLOAD_DIR || "uploads/documents",
   nodeEnv: process.env.NODE_ENV || "development",
 };
