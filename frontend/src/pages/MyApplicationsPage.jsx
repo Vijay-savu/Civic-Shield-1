@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { getErrorMessage, getMyApplicationSummary, getMyApplications } from "../services/api";
 
 function formatDate(value) {
@@ -7,7 +6,7 @@ function formatDate(value) {
   return new Date(value).toLocaleDateString();
 }
 
-export default function DashboardPage() {
+export default function MyApplicationsPage() {
   const [summary, setSummary] = useState({
     applications: 0,
     eligible: 0,
@@ -18,6 +17,7 @@ export default function DashboardPage() {
     lastSubmitted: null,
   });
   const [applications, setApplications] = useState([]);
+  const [expandedId, setExpandedId] = useState("");
   const [error, setError] = useState("");
 
   const load = async () => {
@@ -37,8 +37,6 @@ export default function DashboardPage() {
   useEffect(() => {
     load();
   }, []);
-
-  const recentApplications = useMemo(() => applications.slice(0, 3), [applications]);
 
   return (
     <div className="page-stack">
@@ -79,42 +77,59 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid two">
-        <div className="card">
-          <h3 style={{ marginTop: 0 }}>Quick Actions</h3>
-          <p className="muted">Use these shortcuts for demo flow.</p>
-          <div className="grid two" style={{ marginTop: "10px" }}>
-            <Link to="/eligibility" className="btn">Apply for Schemes</Link>
-            <Link to="/applications" className="btn btn-outline">My Applications</Link>
-            <Link to="/upload" className="btn btn-outline">My Documents</Link>
-            <Link to="/alerts" className="btn btn-outline">Security Alerts</Link>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="scheme-status-row" style={{ marginBottom: "8px" }}>
-            <h3 style={{ margin: 0 }}>Recent Applications</h3>
-            <Link to="/applications" className="btn btn-outline">View All</Link>
-          </div>
-
-          {recentApplications.length === 0 && (
-            <p className="muted">No applications yet. Submit your first scheme application.</p>
-          )}
-
-          {recentApplications.map((application) => (
-            <div key={application.id} className="status-box" style={{ marginTop: "10px" }}>
+        {applications.map((application) => {
+          const isExpanded = expandedId === application.id;
+          return (
+            <div key={application.id} className="card">
               <div className="scheme-status-row">
-                <strong>{application.schemeName}</strong>
+                <span className="scheme-tag">Scheme</span>
                 <span className={`pill ${application.decisionStatus === "Eligible" ? "success" : "warn"}`}>
                   {application.decisionStatus}
                 </span>
               </div>
-              <p className="muted" style={{ margin: "8px 0 0" }}>
-                Submitted on {formatDate(application.submittedAt)}
-              </p>
+              <h3 style={{ margin: "8px 0 4px", fontSize: "2rem" }}>{application.schemeName}</h3>
+              <p className="muted">Submitted on {formatDate(application.submittedAt)}</p>
+
+              <div className="grid two" style={{ marginTop: "10px" }}>
+                <div className="status-box">
+                  <span className="section-title">Application ID</span>
+                  <p className="break" style={{ marginTop: "8px" }}>{application.id}</p>
+                </div>
+                <div className="status-box">
+                  <span className="section-title">Decision</span>
+                  <p style={{ marginTop: "8px" }}>{application.decisionStatus}</p>
+                </div>
+                <div className="status-box">
+                  <span className="section-title">Documents</span>
+                  <p style={{ marginTop: "8px" }}>{application.documentsStatus}</p>
+                </div>
+                <div className="status-box">
+                  <span className="section-title">Income Check</span>
+                  <p style={{ marginTop: "8px" }}>{application.incomeCheckStatus}</p>
+                </div>
+              </div>
+
+              {isExpanded && <p className="muted" style={{ marginTop: "10px" }}>{application.decisionReason}</p>}
+
+              <div style={{ marginTop: "10px", display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={() => setExpandedId((prev) => (prev === application.id ? "" : application.id))}
+                >
+                  {isExpanded ? "Close" : "Open"}
+                </button>
+              </div>
             </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
+
+      {applications.length === 0 && (
+        <div className="card">
+          <p className="muted">No applications yet. Go to Apply for Schemes to submit your first loan application.</p>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import UploadPage from "./pages/UploadPage";
 import EligibilityPage from "./pages/EligibilityPage";
+import MyApplicationsPage from "./pages/MyApplicationsPage";
 import AlertsPage from "./pages/AlertsPage";
 import AdminLogsPage from "./pages/AdminLogsPage";
 
@@ -48,6 +49,14 @@ export default function App() {
         }
       />
       <Route
+        path="/applications"
+        element={
+          <ProtectedLayout>
+            <MyApplicationsPage />
+          </ProtectedLayout>
+        }
+      />
+      <Route
         path="/alerts"
         element={
           <ProtectedLayout>
@@ -63,7 +72,7 @@ export default function App() {
           </ProtectedLayout>
         }
       />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
 }
