@@ -36,6 +36,9 @@ const documentSchema = new mongoose.Schema(
       enum: [
         "aadhaar_card",
         "pan_card",
+        "ration_card",
+        "voter_id",
+        "passport",
         "birth_certificate",
         "driving_licence",
         "income_certificate",

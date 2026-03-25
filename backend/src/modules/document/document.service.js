@@ -1,18 +1,65 @@
 const fs = require("fs/promises");
 const path = require("path");
 const crypto = require("crypto");
+const Tesseract = require("tesseract.js");
+const pdfParse = require("pdf-parse");
 
 const Document = require("./document.model");
 const { createAlert } = require("../alerts/alerts.service");
 const { monitor } = require("../../utils/monitor.util");
 
 const SUPPORTED_DOCUMENT_TYPES = new Set([
-  "aadhaar_card",
   "pan_card",
-  "birth_certificate",
+  "aadhaar_card",
   "driving_licence",
+  "ration_card",
+  "voter_id",
+  "passport",
+  "birth_certificate",
   "income_certificate",
 ]);
+
+const DOCUMENT_TYPE_LABELS = {
+  pan_card: "PAN",
+  aadhaar_card: "Aadhaar",
+  driving_licence: "Driving License",
+  ration_card: "Ration Card",
+  voter_id: "Voter ID",
+  passport: "Passport",
+  birth_certificate: "Birth Certificate",
+  income_certificate: "Income Certificate",
+};
+
+const BACKEND_ROOT = path.resolve(__dirname, "../../../");
+const LOCAL_ENG_TRAINEDDATA = path.join(BACKEND_ROOT, "eng.traineddata");
+let hasLocalEngTrainedData = null;
+
+async function resolveTesseractOptions() {
+  if (hasLocalEngTrainedData === null) {
+    try {
+      await fs.access(LOCAL_ENG_TRAINEDDATA);
+      hasLocalEngTrainedData = true;
+    } catch (_error) {
+      hasLocalEngTrainedData = false;
+    }
+  }
+
+  if (hasLocalEngTrainedData) {
+    return {
+      langPath: BACKEND_ROOT,
+      gzip: false,
+      logger: () => {},
+    };
+  }
+
+  return {
+    logger: () => {},
+  };
+}
+
+function toDocumentTypeLabel(documentType) {
+  return DOCUMENT_TYPE_LABELS[documentType] || documentType;
+}
 
 function normalizeDocumentType(documentType) {
   const normalized = String(documentType || "")
@@ -21,22 +68,28 @@ function normalizeDocumentType(documentType) {
     .replace(/[ -]+/g, "_");
 
   const aliases = {
+    pan: "pan_card",
+    pan_card: "pan_card",
     aadhaar: "aadhaar_card",
     aadhar: "aadhaar_card",
     aadhaar_card: "aadhaar_card",
-    pan: "pan_card",
-    pan_card: "pan_card",
-    birth: "birth_certificate",
-    birth_certificate: "birth_certificate",
+    aadhar_card: "aadhaar_card",
     driving: "driving_licence",
     driving_licence: "driving_licence",
     driving_license: "driving_licence",
+    ration: "ration_card",
+    ration_card: "ration_card",
+    voter: "voter_id",
+    voter_id: "voter_id",
+    voterid: "voter_id",
+    passport: "passport",
+    birth: "birth_certificate",
+    birth_certificate: "birth_certificate",
     income: "income_certificate",
     income_certificate: "income_certificate",
   };
 
   const canonical = aliases[normalized] || normalized;
-
   if (!SUPPORTED_DOCUMENT_TYPES.has(canonical)) {
     const error = new Error("Unsupported document type");
     error.statusCode = 400;
@@ -47,140 +100,462 @@ function normalizeDocumentType(documentType) {
   return canonical;
 }
 
-function parseNumericValue(raw) {
-  const normalized = String(raw).replace(/,/g, "").trim();
-  const value = Number(normalized);
-  return Number.isFinite(value) ? value : null;
+function normalizeUpperText(text) {
+  return String(text || "").toUpperCase();
 }
 
-function extractIncomeFromText(text) {
-  const patterns = [
-    /(?:annual\s+)?income\s*[:=-]?\s*(?:Rs\.?|INR)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i,
-    /salary\s*[:=-]?\s*(?:Rs\.?|INR)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i,
-  ];
+function compactAlphaNumeric(text) {
+  return normalizeUpperText(text).replace(/[^A-Z0-9]/g, "");
+}
 
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      const value = parseNumericValue(match[1]);
-      if (value !== null) {
-        return value;
+function compactDigits(text) {
+  return String(text || "").replace(/\D/g, "");
+}
+
+function tokenizeAlphaNumeric(text) {
+  return normalizeUpperText(text)
+    .split(/[^A-Z0-9]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function findRegexCandidate(rawText, regex) {
+  const tokens = tokenizeAlphaNumeric(rawText);
+  for (const token of tokens) {
+    if (regex.test(token)) {
+      return token;
+    }
+  }
+  return null;
+}
+
+function findAadhaarCandidate(rawText) {
+  const groupedMatch = String(rawText || "").match(/\b(\d{4}\s*\d{4}\s*\d{4})\b/);
+  if (groupedMatch?.[1]) {
+    const digits = compactDigits(groupedMatch[1]);
+    if (/^\d{12}$/.test(digits)) {
+      return digits;
+    }
+  }
+
+  const directMatch = String(rawText || "").match(/\b(\d{12})\b/);
+  if (directMatch?.[1]) {
+    return directMatch[1];
+  }
+
+  return null;
+}
+
+function extractIncomeValue(text) {
+  const source = String(text || "");
+  const upper = normalizeUpperText(source);
+
+  const rsMatch = upper.match(/\bRS\.?\s*([0-9][0-9,]{2,})/);
+  if (rsMatch?.[1]) {
+    const value = Number(rsMatch[1].replace(/,/g, ""));
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+
+  const incomeLineMatch = upper.match(/INCOME[^0-9]{0,20}([0-9][0-9,]{2,})/);
+  if (incomeLineMatch?.[1]) {
+    const value = Number(incomeLineMatch[1].replace(/,/g, ""));
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+
+  const allNumbers = Array.from(upper.matchAll(/([0-9][0-9,]{2,})/g))
+    .map((entry) => Number(entry[1].replace(/,/g, "")))
+    .filter((value) => Number.isFinite(value) && value >= 1000 && value <= 5000000);
+
+  return allNumbers[0] || null;
+}
+
+const NAME_STOPWORDS = new Set([
+  "NAME",
+  "FATHER",
+  "MOTHER",
+  "DATE",
+  "BIRTH",
+  "GOVERNMENT",
+  "GOVT",
+  "OF",
+  "INDIA",
+  "INCOME",
+  "TAX",
+  "DEPARTMENT",
+  "PERMANENT",
+  "ACCOUNT",
+  "NUMBER",
+  "CARD",
+  "CERTIFICATE",
+  "UIDAI",
+  "AADHAAR",
+  "AADHAR",
+  "REVENUE",
+  "DEPUTY",
+  "TAHSILDAR",
+  "DIGITALLY",
+  "SIGNED",
+  "APPLICATION",
+  "NO",
+  "DOB",
+  "MALE",
+  "FEMALE",
+  "ADDRESS",
+  "STATE",
+  "DISTRICT",
+  "MANDAL",
+]);
+
+function extractIdentityTokens(rawText) {
+  const upper = normalizeUpperText(rawText);
+  const lines = upper
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const candidateLines = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/\bNAME\b/.test(line)) {
+      candidateLines.push(line);
+      if (lines[i + 1]) {
+        candidateLines.push(lines[i + 1]);
       }
     }
   }
 
-  return null;
+  const sourceText = (candidateLines.length > 0 ? candidateLines.join(" ") : upper)
+    .replace(/[^A-Z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const rawTokens = sourceText.split(" ").filter(Boolean);
+  const tokens = Array.from(
+    new Set(
+      rawTokens.filter((token) => token.length >= 3 && !NAME_STOPWORDS.has(token))
+    )
+  );
+
+  return tokens.slice(0, 8);
 }
 
-function extractIncomeFromFileName(fileName) {
-  const match = fileName.match(/income[_-]?([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i);
-  if (!match || !match[1]) {
-    return null;
-  }
-
-  return parseNumericValue(match[1]);
-}
-
-function maskMiddle(value, start, end) {
-  const raw = String(value || "");
-  if (raw.length <= start + end) {
-    return raw;
-  }
-
-  const left = raw.slice(0, start);
-  const right = raw.slice(raw.length - end);
-  const middle = "*".repeat(raw.length - start - end);
-  return `${left}${middle}${right}`;
-}
-
-function getIncomeBand(income) {
-  if (income < 250000) {
-    return "below_2_5_lakh";
-  }
-  if (income < 500000) {
-    return "between_2_5_and_5_lakh";
-  }
-  return "above_5_lakh";
-}
-
-function extractAadhaarNumber(text) {
-  const candidates = text.match(/(?:\d[ -]?){8,16}\d/g) || [];
-
-  for (const candidate of candidates) {
-    const digitsOnly = candidate.replace(/\D/g, "");
-    if (digitsOnly.length === 12) {
-      return {
-        value: digitsOnly,
-        reason: "aadhaar_verified",
-      };
-    }
-  }
-
-  if (candidates.length > 0) {
+function validatePan(rawText) {
+  const candidate = findRegexCandidate(rawText, /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/);
+  if (candidate) {
     return {
-      value: null,
-      reason: "aadhaar_number_must_be_12_digits",
+      valid: true,
+      reason: "Valid PAN format detected",
+      extractedFields: {
+        pan: candidate,
+      },
     };
   }
 
   return {
-    value: null,
-    reason: "aadhaar_number_not_found",
+    valid: false,
+    reason: "PAN format invalid",
+    extractedFields: {},
   };
 }
 
-function extractPanNumber(text) {
-  const match = text.toUpperCase().match(/\b[A-Z]{5}[0-9]{4}[A-Z]\b/);
-  if (!match) {
-    return null;
+function validateAadhaar(rawText) {
+  const candidate = findAadhaarCandidate(rawText);
+  if (candidate) {
+    return {
+      valid: true,
+      reason: "Valid Aadhaar format detected",
+      extractedFields: {
+        aadhaar: candidate,
+      },
+    };
   }
 
-  return match[0];
+  return {
+    valid: false,
+    reason: "Aadhaar must contain 12 digits",
+    extractedFields: {},
+  };
 }
 
-function extractDrivingLicenceNumber(text) {
-  const patterns = [
-    /\b[A-Z]{2}[ -]?\d{2}[ -]?\d{4}[ -]?\d{7}\b/i,
-    /\b[A-Z]{2}[ -]?\d{13}\b/i,
-  ];
+function validateDrivingLicence(rawText) {
+  const tokens = tokenizeAlphaNumeric(rawText);
+  const candidate = tokens.find(
+    (token) =>
+      /^[A-Z0-9]{10,16}$/.test(token) &&
+      !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(token) &&
+      !/^[A-Z]{3}[0-9]{7}$/.test(token) &&
+      !/^[A-Z][0-9]{7}$/.test(token) &&
+      !/^\d{12}$/.test(token)
+  );
 
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match && match[0]) {
-      return match[0].replace(/\s+/g, "");
-    }
+  if (candidate) {
+    return {
+      valid: true,
+      reason: "Valid Driving License format detected",
+      extractedFields: {
+        drivingLicence: candidate,
+      },
+    };
+  }
+
+  return {
+    valid: false,
+    reason: "Driving License format invalid (expected format similar to AP1220110012345)",
+    extractedFields: {},
+  };
+}
+
+function validateRationCard(rawText) {
+  const tokens = tokenizeAlphaNumeric(rawText);
+  const candidate = tokens.find(
+    (token) =>
+      /^[A-Z0-9]{8,}$/.test(token) &&
+      !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(token) &&
+      !/^[A-Z]{3}[0-9]{7}$/.test(token) &&
+      !/^[A-Z][0-9]{7}$/.test(token) &&
+      !/^\d{12}$/.test(token)
+  );
+
+  if (candidate) {
+    return {
+      valid: true,
+      reason: "Valid Ration Card format detected",
+      extractedFields: {
+        rationCard: candidate,
+      },
+    };
+  }
+
+  return {
+    valid: false,
+    reason: "Ration Card must be alphanumeric and length >= 8",
+    extractedFields: {},
+  };
+}
+
+function validateVoterId(rawText) {
+  const candidate = findRegexCandidate(rawText, /^[A-Z]{3}[0-9]{7}$/);
+  if (candidate) {
+    return {
+      valid: true,
+      reason: "Valid Voter ID format detected",
+      extractedFields: {
+        voterId: candidate,
+      },
+    };
+  }
+
+  return {
+    valid: false,
+    reason: "Voter ID format invalid",
+    extractedFields: {},
+  };
+}
+
+function validatePassport(rawText) {
+  const candidate = findRegexCandidate(rawText, /^[A-Z][0-9]{7}$/);
+  if (candidate) {
+    return {
+      valid: true,
+      reason: "Valid Passport format detected",
+      extractedFields: {
+        passport: candidate,
+      },
+    };
+  }
+
+  return {
+    valid: false,
+    reason: "Passport format invalid",
+    extractedFields: {},
+  };
+}
+
+function validateBirthCertificate(rawText) {
+  const upper = normalizeUpperText(rawText);
+  const hasBirth = upper.includes("BIRTH");
+  const hasName = upper.includes("NAME");
+  const hasDate = upper.includes("DATE");
+
+  if (hasBirth && hasName && hasDate) {
+    return {
+      valid: true,
+      reason: "Birth certificate keywords detected",
+      extractedFields: {},
+    };
+  }
+
+  return {
+    valid: false,
+    reason: "Birth certificate must contain Birth, Name and Date",
+    extractedFields: {},
+  };
+}
+
+function validateIncomeCertificate(rawText) {
+  const upper = normalizeUpperText(rawText);
+  const hasIncome = upper.includes("INCOME");
+
+  if (!hasIncome) {
+    return {
+      valid: false,
+      reason: "Income keyword not found",
+      extractedIncome: null,
+      extractedFields: {},
+    };
+  }
+
+  const income = extractIncomeValue(rawText);
+  if (typeof income !== "number") {
+    return {
+      valid: false,
+      reason: "Income amount not found",
+      extractedIncome: null,
+      extractedFields: {},
+    };
+  }
+
+  return {
+    valid: true,
+    reason: "Income certificate validated",
+    extractedIncome: income,
+    extractedFields: {
+      income,
+    },
+  };
+}
+
+function detectDocumentTypeFromText(rawText) {
+  const upper = normalizeUpperText(rawText);
+  const compact = compactAlphaNumeric(rawText);
+
+  if (findRegexCandidate(rawText, /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/)) {
+    return "pan_card";
+  }
+
+  if (findAadhaarCandidate(rawText)) {
+    return "aadhaar_card";
+  }
+
+  if (findRegexCandidate(rawText, /^[A-Z]{3}[0-9]{7}$/)) {
+    return "voter_id";
+  }
+
+  if (findRegexCandidate(rawText, /^[A-Z][0-9]{7}$/)) {
+    return "passport";
+  }
+
+  const hasDrivingKeyword =
+    upper.includes("DRIVING") ||
+    upper.includes("LICENCE") ||
+    upper.includes("LICENSE") ||
+    /\bDL\b/.test(upper);
+  if (hasDrivingKeyword && findRegexCandidate(rawText, /^[A-Z0-9]{10,16}$/) && !/[A-Z]{5}[0-9]{4}[A-Z]/.test(compact)) {
+    return "driving_licence";
+  }
+
+  if (upper.includes("RATION")) {
+    return "ration_card";
+  }
+
+  if (upper.includes("BIRTH")) {
+    return "birth_certificate";
+  }
+
+  if (upper.includes("INCOME")) {
+    return "income_certificate";
   }
 
   return null;
 }
 
-function extractDateOfBirth(text) {
-  const ddmmyyyy = text.match(/\b(0?[1-9]|[12][0-9]|3[01])[\/.-](0?[1-9]|1[0-2])[\/.-]((?:19|20)\d{2})\b/);
-  if (ddmmyyyy) {
-    const day = String(ddmmyyyy[1]).padStart(2, "0");
-    const month = String(ddmmyyyy[2]).padStart(2, "0");
-    const year = ddmmyyyy[3];
-    return `${year}-${month}-${day}`;
+function validateDocumentText({ selectedDocumentType, ocrText, ocrReadFailed = false }) {
+  const rawText = String(ocrText || "");
+  const detectedType = detectDocumentTypeFromText(rawText);
+  const typeToValidate = selectedDocumentType || detectedType;
+
+  if (!rawText.trim() && ocrReadFailed) {
+    return {
+      documentType: toDocumentTypeLabel(selectedDocumentType || "Unknown"),
+      documentTypeKey: selectedDocumentType || null,
+      valid: false,
+      reason: "OCR failed to read the file. Check local OCR model (eng.traineddata) and image quality.",
+      extractedIncome: null,
+      extractedFields: {},
+      ocrStatus: "failed",
+      detectedDocumentTypeKey: null,
+      detectedDocumentType: null,
+    };
   }
 
-  const yyyymmdd = text.match(/\b((?:19|20)\d{2})[\/.-](0?[1-9]|1[0-2])[\/.-](0?[1-9]|[12][0-9]|3[01])\b/);
-  if (yyyymmdd) {
-    const year = yyyymmdd[1];
-    const month = String(yyyymmdd[2]).padStart(2, "0");
-    const day = String(yyyymmdd[3]).padStart(2, "0");
-    return `${year}-${month}-${day}`;
+  if (!typeToValidate) {
+    return {
+      documentType: "Unknown",
+      documentTypeKey: null,
+      valid: false,
+      reason: "Unable to detect document type",
+      extractedIncome: null,
+      extractedFields: {},
+      ocrStatus: rawText.trim() ? "extracted" : "not_found",
+    };
   }
 
-  return null;
+  let result;
+  if (typeToValidate === "pan_card") {
+    result = validatePan(rawText);
+  } else if (typeToValidate === "aadhaar_card") {
+    result = validateAadhaar(rawText);
+  } else if (typeToValidate === "driving_licence") {
+    result = validateDrivingLicence(rawText);
+  } else if (typeToValidate === "ration_card") {
+    result = validateRationCard(rawText);
+  } else if (typeToValidate === "voter_id") {
+    result = validateVoterId(rawText);
+  } else if (typeToValidate === "passport") {
+    result = validatePassport(rawText);
+  } else if (typeToValidate === "birth_certificate") {
+    result = validateBirthCertificate(rawText);
+  } else if (typeToValidate === "income_certificate") {
+    result = validateIncomeCertificate(rawText);
+  } else {
+    result = {
+      valid: false,
+      reason: "Unsupported document type",
+      extractedIncome: null,
+      extractedFields: {},
+    };
+  }
+
+  const identityTokens = extractIdentityTokens(rawText);
+  const extractedFields = {
+    ...(result.extractedFields || {}),
+    identityTokens,
+  };
+
+  return {
+    documentType: toDocumentTypeLabel(typeToValidate),
+    documentTypeKey: typeToValidate,
+    valid: Boolean(result.valid),
+    reason: result.reason,
+    extractedIncome: typeof result.extractedIncome === "number" ? result.extractedIncome : null,
+    extractedFields,
+    detectedDocumentTypeKey: detectedType || null,
+    detectedDocumentType: detectedType ? toDocumentTypeLabel(detectedType) : null,
+    ocrStatus: rawText.trim() ? "extracted" : "not_found",
+  };
 }
 
 async function buildOcrInput({ file, ocrHint }) {
-  const extension = path.extname(file.originalname).toLowerCase();
+  const extension = path.extname(file.originalname || "").toLowerCase();
   const chunks = [];
   let readFailed = false;
 
   const canReadAsText =
-    file.mimetype.startsWith("text/") ||
+    String(file.mimetype || "").startsWith("text/") ||
     [".txt", ".csv", ".json", ".md"].includes(extension);
 
   if (canReadAsText) {
@@ -192,142 +567,46 @@ async function buildOcrInput({ file, ocrHint }) {
     }
   }
 
+  const isPdf = file.mimetype === "application/pdf" || extension === ".pdf";
+  if (isPdf) {
+    try {
+      const pdfBuffer = await fs.readFile(file.path);
+      const pdfData = await pdfParse(pdfBuffer);
+      if (pdfData?.text) {
+        chunks.push(pdfData.text);
+      }
+    } catch (_error) {
+      readFailed = true;
+    }
+  }
+
+  const isImage = String(file.mimetype || "").startsWith("image/");
+  if (isImage) {
+    try {
+      const tesseractOptions = await resolveTesseractOptions();
+      const ocrResult = await Tesseract.recognize(file.path, "eng", tesseractOptions);
+      const imageText = ocrResult?.data?.text || "";
+      if (imageText.trim()) {
+        chunks.push(imageText);
+      }
+    } catch (_error) {
+      readFailed = true;
+    }
+  }
+
   if (ocrHint) {
     chunks.push(String(ocrHint));
   }
 
-  chunks.push(path.basename(file.originalname, extension).replace(/[_-]+/g, " "));
+  // Filename hint helps document-type detection when OCR quality is low.
+  if (file?.originalname) {
+    chunks.push(String(file.originalname));
+  }
 
   return {
     text: chunks.join("\n"),
     readFailed,
   };
-}
-
-function validateDocumentFromOcr({ documentType, ocrText, readFailed, fileName }) {
-  const normalizedText = String(ocrText || "").trim();
-  const baseResult = {
-    extractedIncome: null,
-    extractedFields: {},
-    validationStatus: "invalid",
-    validationReason: "document_needs_review",
-    ocrStatus: readFailed ? "failed" : "not_found",
-  };
-
-  if (!normalizedText) {
-    return baseResult;
-  }
-
-  if (documentType === "aadhaar_card") {
-    const aadhaarResult = extractAadhaarNumber(normalizedText);
-    if (aadhaarResult.value) {
-      return {
-        ...baseResult,
-        extractedFields: {
-          aadhaarLast4: aadhaarResult.value.slice(-4),
-          aadhaarMasked: maskMiddle(aadhaarResult.value, 4, 4),
-        },
-        validationStatus: "valid",
-        validationReason: "aadhaar_verified",
-        ocrStatus: "extracted",
-      };
-    }
-
-    return {
-      ...baseResult,
-      validationReason: aadhaarResult.reason,
-    };
-  }
-
-  if (documentType === "pan_card") {
-    const pan = extractPanNumber(normalizedText);
-    if (pan) {
-      return {
-        ...baseResult,
-        extractedFields: {
-          panMasked: maskMiddle(pan, 3, 2),
-        },
-        validationStatus: "valid",
-        validationReason: "pan_verified",
-        ocrStatus: "extracted",
-      };
-    }
-
-    return {
-      ...baseResult,
-      validationReason: "pan_format_invalid",
-    };
-  }
-
-  if (documentType === "driving_licence") {
-    const licenceNumber = extractDrivingLicenceNumber(normalizedText);
-    if (licenceNumber) {
-      return {
-        ...baseResult,
-        extractedFields: {
-          licenceMasked: maskMiddle(licenceNumber, 4, 3),
-        },
-        validationStatus: "valid",
-        validationReason: "driving_licence_verified",
-        ocrStatus: "extracted",
-      };
-    }
-
-    return {
-      ...baseResult,
-      validationReason: "driving_licence_number_not_found",
-    };
-  }
-
-  if (documentType === "birth_certificate") {
-    const dob = extractDateOfBirth(normalizedText);
-    const hasBirthKeyword = /birth|dob|date\s*of\s*birth/i.test(normalizedText);
-
-    if (dob && hasBirthKeyword) {
-      return {
-        ...baseResult,
-        extractedFields: {
-          dateOfBirth: dob,
-        },
-        validationStatus: "valid",
-        validationReason: "birth_certificate_verified",
-        ocrStatus: "extracted",
-      };
-    }
-
-    return {
-      ...baseResult,
-      validationReason: dob ? "birth_context_missing" : "dob_not_found",
-    };
-  }
-
-  if (documentType === "income_certificate") {
-    const income = extractIncomeFromText(normalizedText) ?? extractIncomeFromFileName(fileName);
-
-    if (typeof income === "number" && income >= 0) {
-      return {
-        ...baseResult,
-        extractedIncome: income,
-        extractedFields: {
-          incomeDetected: true,
-          incomeBand: getIncomeBand(income),
-        },
-        validationStatus: "valid",
-        validationReason: "income_extracted",
-        ocrStatus: "extracted",
-      };
-    }
-
-    return {
-      ...baseResult,
-      extractedFields: {
-        incomeDetected: false,
-      },
-      validationReason: "income_value_not_found",
-    };
-  }
-
-  return baseResult;
 }
 
 function canAccessDocument(requester, documentOwnerId) {
@@ -364,6 +643,67 @@ async function getDocumentForRequester({ documentId, requester }) {
   }
 
   return document;
+}
+
+function toDocumentSummary(document) {
+  return {
+    id: document._id.toString(),
+    documentType: document.documentType,
+    documentTypeLabel: toDocumentTypeLabel(document.documentType),
+    valid: document.validationStatus === "valid",
+    reason: document.validationReason,
+    originalName: document.originalName,
+    mimeType: document.mimeType,
+    size: document.size,
+    validationStatus: document.validationStatus,
+    validationReason: document.validationReason,
+    ocrStatus: document.ocrStatus,
+    sha256Hash: document.sha256Hash,
+    createdAt: document.createdAt,
+  };
+}
+
+async function listMyDocumentsForUser({ requester }) {
+  const documents = await Document.find({
+    userId: requester.sub,
+    validationStatus: "valid",
+  }).sort({ createdAt: -1 });
+
+  const latestByType = new Map();
+  for (const document of documents) {
+    if (!latestByType.has(document.documentType)) {
+      latestByType.set(document.documentType, document);
+    }
+  }
+
+  return Array.from(latestByType.values()).map(toDocumentSummary);
+}
+
+async function removeDocumentFileIfPresent(filePath) {
+  if (!filePath) {
+    return;
+  }
+
+  try {
+    await fs.unlink(filePath);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+async function deleteDocumentForRequester({ documentId, requester }) {
+  const document = await getDocumentForRequester({ documentId, requester });
+  await removeDocumentFileIfPresent(document.filePath);
+  await Document.deleteOne({ _id: document._id });
+
+  return {
+    id: document._id.toString(),
+    documentType: document.documentType,
+    status: "deleted",
+    reason: "document_removed",
+  };
 }
 
 async function createTamperAlert({ requester, documentId, ipAddress, source }) {
@@ -442,14 +782,44 @@ async function uploadDocumentForUser({ file, userId, documentType, ocrHint }) {
   }
 
   const normalizedType = normalizeDocumentType(documentType);
+  const existingDocument = await Document.findOne({
+    userId,
+    documentType: normalizedType,
+    validationStatus: "valid",
+  });
+
+  if (existingDocument) {
+    const error = new Error("Only one document is allowed per type. This type is already uploaded.");
+    error.statusCode = 409;
+    error.reason = "document_type_already_uploaded";
+    throw error;
+  }
+
   const sha256Hash = await computeFileSha256(file.path);
   const ocrInput = await buildOcrInput({ file, ocrHint });
-  const validation = validateDocumentFromOcr({
-    documentType: normalizedType,
+  const validation = validateDocumentText({
+    selectedDocumentType: normalizedType,
     ocrText: ocrInput.text,
-    readFailed: ocrInput.readFailed,
-    fileName: file.originalname,
+    ocrReadFailed: ocrInput.readFailed,
   });
+
+  if (validation.detectedDocumentTypeKey && validation.detectedDocumentTypeKey !== normalizedType) {
+    await removeDocumentFileIfPresent(file.path);
+    const error = new Error(
+      `Document type mismatch: selected ${toDocumentTypeLabel(normalizedType)} but detected ${validation.detectedDocumentType}`
+    );
+    error.statusCode = 422;
+    error.reason = "document_type_mismatch";
+    throw error;
+  }
+
+  if (!validation.valid) {
+    await removeDocumentFileIfPresent(file.path);
+    const error = new Error(validation.reason);
+    error.statusCode = 422;
+    error.reason = "invalid_document";
+    throw error;
+  }
 
   const saved = await Document.create({
     userId,
@@ -463,20 +833,31 @@ async function uploadDocumentForUser({ file, userId, documentType, ocrHint }) {
     extractedIncome: validation.extractedIncome,
     extractedFields: validation.extractedFields,
     ocrStatus: validation.ocrStatus,
-    validationStatus: validation.validationStatus,
-    validationReason: validation.validationReason,
+    validationStatus: "valid",
+    validationReason: validation.reason,
+  });
+
+  // Bonus log requested by user.
+  monitor("ocr", {
+    actorId: userId,
+    status: "processed",
+    documentType: validation.documentType,
+    valid: validation.valid,
+    reason: validation.reason,
   });
 
   return {
     id: saved._id.toString(),
     status: "uploaded",
-    reason: saved.validationStatus === "valid" ? "document_valid" : "invalid_document",
-    documentType: saved.documentType,
+    documentType: validation.documentType,
+    documentTypeKey: saved.documentType,
+    valid: true,
+    reason: validation.reason,
+    ocrStatus: saved.ocrStatus,
+    sha256Hash: saved.sha256Hash,
     validationStatus: saved.validationStatus,
     validationReason: saved.validationReason,
-    ocrStatus: saved.ocrStatus,
     extractedFields: saved.extractedFields,
-    sha256Hash: saved.sha256Hash,
   };
 }
 
@@ -517,6 +898,8 @@ async function simulateTamperingById({ documentId }) {
 
 module.exports = {
   uploadDocumentForUser,
+  listMyDocumentsForUser,
+  deleteDocumentForRequester,
   getDocumentForRequester,
   verifyDocumentIntegrity,
   getDocumentIntegrityStatusForUser,
