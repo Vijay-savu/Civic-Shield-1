@@ -3,6 +3,8 @@ const path = require("path");
 const crypto = require("crypto");
 
 const Document = require("./document.model");
+const { createAlert } = require("../alerts/alerts.service");
+const { monitor } = require("../../utils/monitor.util");
 
 function parseNumericValue(raw) {
   const normalized = String(raw).replace(/,/g, "").trim();
@@ -81,7 +83,7 @@ function canAccessDocument(requester, documentOwnerId) {
     return false;
   }
 
-  if (requester.role === "Admin") {
+  if (String(requester.role).toLowerCase() === "admin") {
     return true;
   }
 
@@ -98,33 +100,83 @@ async function getDocumentForRequester({ documentId, requester }) {
   if (!document) {
     const error = new Error("Document not found");
     error.statusCode = 404;
+    error.reason = "document_not_found";
     throw error;
   }
 
   if (!canAccessDocument(requester, document.userId)) {
     const error = new Error("Forbidden: You cannot access this document");
     error.statusCode = 403;
+    error.reason = "document_access_denied";
     throw error;
   }
 
   return document;
 }
 
-async function verifyDocumentIntegrity(document) {
+async function createTamperAlert({ requester, documentId, ipAddress, source }) {
+  try {
+    await createAlert({
+      type: "tampering_detected",
+      riskScore: "High",
+      message: "Document tampering detected by hash mismatch",
+      actorId: requester?.sub,
+      actorEmail: requester?.email,
+      actorRole: requester?.role,
+      source,
+      targetType: "document",
+      targetId: documentId,
+      ipAddress,
+      metadata: {
+        status: "compromised",
+      },
+    });
+
+    monitor("tampering", {
+      documentId,
+      status: "compromised",
+      actorEmail: requester?.email,
+      ipAddress,
+      source,
+    });
+  } catch (error) {
+    console.error("Tamper alert creation failed:", error.message);
+  }
+}
+
+async function verifyDocumentIntegrity({ document, requester, ipAddress, source }) {
   try {
     const currentHash = await computeFileSha256(document.filePath);
     const isValid = currentHash === document.sha256Hash;
 
+    if (!isValid) {
+      await createTamperAlert({
+        requester,
+        documentId: document._id.toString(),
+        ipAddress,
+        source,
+      });
+    }
+
     return {
-      integrityStatus: isValid ? "Verified" : "Tampered",
+      integrityStatus: isValid ? "safe" : "compromised",
       hashMatches: isValid,
-      currentHash,
+      riskScore: isValid ? "Low" : "High",
+      reason: isValid ? "hash_verified" : "hash_mismatch_detected",
     };
   } catch (_error) {
+    await createTamperAlert({
+      requester,
+      documentId: document._id.toString(),
+      ipAddress,
+      source,
+    });
+
     return {
-      integrityStatus: "Tampered",
+      integrityStatus: "compromised",
       hashMatches: false,
-      currentHash: null,
+      riskScore: "High",
+      reason: "file_unreadable_or_missing",
     };
   }
 }
@@ -133,6 +185,7 @@ async function uploadDocumentForUser({ file, userId }) {
   if (!file) {
     const error = new Error("Document file is required");
     error.statusCode = 400;
+    error.reason = "missing_document_file";
     throw error;
   }
 
@@ -153,26 +206,43 @@ async function uploadDocumentForUser({ file, userId }) {
 
   return {
     id: saved._id.toString(),
-    originalName: saved.originalName,
-    storedFileName: saved.fileName,
-    size: saved.size,
-    mimeType: saved.mimeType,
-    ocr: {
-      status: saved.ocrStatus,
-      mode: "simulated",
-    },
-    uploadedAt: saved.createdAt,
+    status: "uploaded",
+    reason: saved.ocrStatus === "extracted" ? "ocr_processed" : "ocr_income_not_found",
   };
 }
 
-async function getDocumentIntegrityStatusForUser({ documentId, requester }) {
+async function getDocumentIntegrityStatusForUser({ documentId, requester, ipAddress, source }) {
   const document = await getDocumentForRequester({ documentId, requester });
-  const integrity = await verifyDocumentIntegrity(document);
+  const integrity = await verifyDocumentIntegrity({
+    document,
+    requester,
+    ipAddress,
+    source,
+  });
+
+  return {
+    status: integrity.integrityStatus,
+    reason: integrity.reason,
+    riskScore: integrity.riskScore,
+  };
+}
+
+async function simulateTamperingById({ documentId }) {
+  const document = await Document.findById(documentId);
+  if (!document) {
+    const error = new Error("Document not found");
+    error.statusCode = 404;
+    error.reason = "document_not_found";
+    throw error;
+  }
+
+  document.sha256Hash = crypto.randomBytes(32).toString("hex");
+  await document.save();
 
   return {
     documentId: document._id.toString(),
-    integrityStatus: integrity.integrityStatus,
-    verifiedAt: new Date(),
+    status: "tamper_simulated",
+    reason: "hash_overwritten_for_demo",
   };
 }
 
@@ -181,4 +251,5 @@ module.exports = {
   getDocumentForRequester,
   verifyDocumentIntegrity,
   getDocumentIntegrityStatusForUser,
+  simulateTamperingById,
 };

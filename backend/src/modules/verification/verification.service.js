@@ -1,50 +1,48 @@
 const Verification = require("./verification.model");
-const {
-  eligibilityIncomeThreshold,
-} = require("../../config/env");
-const {
-  getDocumentForRequester,
-  verifyDocumentIntegrity,
-} = require("../document/document.service");
+const { eligibilityIncomeThreshold } = require("../../config/env");
+const { maxRiskScore } = require("../../utils/risk.util");
+const { getDocumentForRequester, verifyDocumentIntegrity } = require("../document/document.service");
 
-async function evaluateEligibility({ documentId, requester }) {
+async function evaluateEligibility({ documentId, requester, ipAddress }) {
   const document = await getDocumentForRequester({ documentId, requester });
-  const integrityResult = await verifyDocumentIntegrity(document);
+  const integrity = await verifyDocumentIntegrity({
+    document,
+    requester,
+    ipAddress,
+    source: "verification.eligibility",
+  });
 
-  let eligibilityStatus = "Not Eligible";
-  let decisionReason = "income_not_available";
+  let status = "Not Eligible";
+  let reason = "income_not_available";
 
-  if (integrityResult.integrityStatus === "Tampered") {
-    decisionReason = "tamper_detected";
+  if (integrity.integrityStatus === "compromised") {
+    reason = "tampering_detected";
   } else if (typeof document.extractedIncome !== "number") {
-    decisionReason = "income_not_available";
+    reason = "income_not_available";
   } else if (document.extractedIncome < eligibilityIncomeThreshold) {
-    eligibilityStatus = "Eligible";
-    decisionReason = "income_below_threshold";
+    status = "Eligible";
+    reason = "income_below_threshold";
   } else {
-    eligibilityStatus = "Not Eligible";
-    decisionReason = "income_above_threshold";
+    status = "Not Eligible";
+    reason = "income_above_threshold";
   }
+
+  const riskScore = maxRiskScore(requester.riskScore || "Low", integrity.riskScore || "Low");
 
   const verification = await Verification.create({
     documentId: document._id,
     citizenId: document.userId,
     verifiedBy: requester.sub,
-    eligibilityStatus,
-    integrityStatus: integrityResult.integrityStatus,
-    decisionReason,
+    eligibilityStatus: status,
+    integrityStatus: integrity.integrityStatus === "safe" ? "Verified" : "Tampered",
+    decisionReason: reason,
   });
 
   return {
     verificationId: verification._id.toString(),
-    documentId: document._id.toString(),
-    eligibilityStatus,
-    integrityStatus: integrityResult.integrityStatus,
-    privacy: {
-      incomeExposed: false,
-      outputPolicy: "decision_only",
-    },
-    verifiedAt: verification.createdAt,
+    status,
+    reason,
+    riskScore,
   };
 }
 

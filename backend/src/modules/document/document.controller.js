@@ -1,4 +1,5 @@
 const { logAuditAction } = require("../audit/audit.service");
+const { monitor } = require("../../utils/monitor.util");
 const {
   uploadDocumentForUser,
   getDocumentIntegrityStatusForUser,
@@ -19,6 +20,13 @@ async function uploadDocument(req, res, next) {
       userId: req.user.sub,
     });
 
+    monitor("uploads", {
+      actorEmail: req.user.email,
+      status: result.status,
+      reason: result.reason,
+      ipAddress: req.ip,
+    });
+
     await safeAudit({
       action: "upload",
       outcome: "success",
@@ -30,16 +38,23 @@ async function uploadDocument(req, res, next) {
       ipAddress: req.ip,
       userAgent: req.get("user-agent"),
       metadata: {
-        originalName: result.originalName,
+        status: result.status,
+        reason: result.reason,
       },
     });
 
     return res.status(201).json({
       success: true,
-      message: "Document uploaded and processed",
       data: result,
     });
   } catch (error) {
+    monitor("uploads", {
+      actorEmail: req.user?.email,
+      status: "failed",
+      reason: error.reason || error.message,
+      ipAddress: req.ip,
+    });
+
     await safeAudit({
       action: "upload",
       outcome: "failure",
@@ -50,7 +65,7 @@ async function uploadDocument(req, res, next) {
       ipAddress: req.ip,
       userAgent: req.get("user-agent"),
       metadata: {
-        reason: error.message,
+        reason: error.reason || error.message,
       },
     });
 
@@ -63,6 +78,8 @@ async function getDocumentIntegrity(req, res, next) {
     const result = await getDocumentIntegrityStatusForUser({
       documentId: req.params.documentId,
       requester: req.user,
+      ipAddress: req.ip,
+      source: "document.integrity",
     });
 
     return res.status(200).json({

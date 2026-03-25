@@ -1,16 +1,26 @@
 const mongoose = require("mongoose");
 
-const auditLogSchema = new mongoose.Schema(
+const alertSchema = new mongoose.Schema(
   {
-    action: {
+    type: {
       type: String,
-      enum: ["login", "upload", "verification", "tampering", "alert"],
+      enum: ["failed_login_attempts", "rate_limit_exceeded", "tampering_detected"],
       required: true,
     },
-    outcome: {
+    status: {
       type: String,
-      enum: ["success", "failure", "info"],
+      enum: ["open", "resolved"],
+      default: "open",
+    },
+    riskScore: {
+      type: String,
+      enum: ["Low", "Medium", "High"],
       required: true,
+    },
+    message: {
+      type: String,
+      required: true,
+      trim: true,
     },
     actorId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -27,6 +37,10 @@ const auditLogSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    source: {
+      type: String,
+      default: null,
+    },
     targetType: {
       type: String,
       default: null,
@@ -39,10 +53,6 @@ const auditLogSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-    userAgent: {
-      type: String,
-      default: null,
-    },
     metadata: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
@@ -51,9 +61,9 @@ const auditLogSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-auditLogSchema.index({ createdAt: -1 });
-auditLogSchema.index({ action: 1, outcome: 1, createdAt: -1 });
+alertSchema.index({ createdAt: -1 });
+alertSchema.index({ type: 1, status: 1, createdAt: -1 });
 
-const AuditLog = mongoose.model("AuditLog", auditLogSchema);
+const Alert = mongoose.model("Alert", alertSchema);
 
-module.exports = AuditLog;
+module.exports = Alert;

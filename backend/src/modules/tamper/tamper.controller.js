@@ -1,6 +1,8 @@
 const { logAuditAction } = require("../audit/audit.service");
 const { monitor } = require("../../utils/monitor.util");
-const { evaluateEligibility } = require("./verification.service");
+const {
+  getDocumentIntegrityStatusForUser,
+} = require("../document/document.service");
 
 async function safeAudit(payload) {
   try {
@@ -10,16 +12,18 @@ async function safeAudit(payload) {
   }
 }
 
-async function verifyEligibility(req, res, next) {
+async function checkTamper(req, res, next) {
   try {
-    const result = await evaluateEligibility({
-      documentId: req.params.documentId,
+    const result = await getDocumentIntegrityStatusForUser({
+      documentId: req.params.id,
       requester: req.user,
       ipAddress: req.ip,
+      source: "tamper.check",
     });
 
-    monitor("verification", {
+    monitor("tampering", {
       actorEmail: req.user.email,
+      documentId: req.params.id,
       status: result.status,
       reason: result.reason,
       riskScore: result.riskScore,
@@ -27,17 +31,16 @@ async function verifyEligibility(req, res, next) {
     });
 
     await safeAudit({
-      action: "verification",
-      outcome: "success",
+      action: "tampering",
+      outcome: result.status === "safe" ? "success" : "failure",
       actorId: req.user.sub,
       actorEmail: req.user.email,
       actorRole: req.user.role,
       targetType: "document",
-      targetId: req.params.documentId,
+      targetId: req.params.id,
       ipAddress: req.ip,
       userAgent: req.get("user-agent"),
       metadata: {
-        verificationId: result.verificationId,
         status: result.status,
         reason: result.reason,
         riskScore: result.riskScore,
@@ -46,32 +49,13 @@ async function verifyEligibility(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      data: {
-        status: result.status,
-        reason: result.reason,
-        riskScore: result.riskScore,
-      },
+      data: result,
     });
   } catch (error) {
-    await safeAudit({
-      action: "verification",
-      outcome: "failure",
-      actorId: req.user?.sub,
-      actorEmail: req.user?.email,
-      actorRole: req.user?.role,
-      targetType: "document",
-      targetId: req.params.documentId,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent"),
-      metadata: {
-        reason: error.reason || error.message,
-      },
-    });
-
     return next(error);
   }
 }
 
 module.exports = {
-  verifyEligibility,
+  checkTamper,
 };
