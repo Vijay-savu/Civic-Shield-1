@@ -76,6 +76,59 @@ async function simulateOcrIncomeExtraction(file) {
   };
 }
 
+function canAccessDocument(requester, documentOwnerId) {
+  if (!requester) {
+    return false;
+  }
+
+  if (requester.role === "Admin") {
+    return true;
+  }
+
+  return String(requester.sub) === String(documentOwnerId);
+}
+
+async function computeFileSha256(filePath) {
+  const fileBuffer = await fs.readFile(filePath);
+  return crypto.createHash("sha256").update(fileBuffer).digest("hex");
+}
+
+async function getDocumentForRequester({ documentId, requester }) {
+  const document = await Document.findById(documentId);
+  if (!document) {
+    const error = new Error("Document not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!canAccessDocument(requester, document.userId)) {
+    const error = new Error("Forbidden: You cannot access this document");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  return document;
+}
+
+async function verifyDocumentIntegrity(document) {
+  try {
+    const currentHash = await computeFileSha256(document.filePath);
+    const isValid = currentHash === document.sha256Hash;
+
+    return {
+      integrityStatus: isValid ? "Verified" : "Tampered",
+      hashMatches: isValid,
+      currentHash,
+    };
+  } catch (_error) {
+    return {
+      integrityStatus: "Tampered",
+      hashMatches: false,
+      currentHash: null,
+    };
+  }
+}
+
 async function uploadDocumentForUser({ file, userId }) {
   if (!file) {
     const error = new Error("Document file is required");
@@ -83,9 +136,7 @@ async function uploadDocumentForUser({ file, userId }) {
     throw error;
   }
 
-  const fileBuffer = await fs.readFile(file.path);
-  const sha256Hash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
-
+  const sha256Hash = await computeFileSha256(file.path);
   const { extractedIncome, ocrStatus } = await simulateOcrIncomeExtraction(file);
 
   const saved = await Document.create({
@@ -107,7 +158,6 @@ async function uploadDocumentForUser({ file, userId }) {
     size: saved.size,
     mimeType: saved.mimeType,
     ocr: {
-      extractedIncome: saved.extractedIncome,
       status: saved.ocrStatus,
       mode: "simulated",
     },
@@ -115,6 +165,20 @@ async function uploadDocumentForUser({ file, userId }) {
   };
 }
 
+async function getDocumentIntegrityStatusForUser({ documentId, requester }) {
+  const document = await getDocumentForRequester({ documentId, requester });
+  const integrity = await verifyDocumentIntegrity(document);
+
+  return {
+    documentId: document._id.toString(),
+    integrityStatus: integrity.integrityStatus,
+    verifiedAt: new Date(),
+  };
+}
+
 module.exports = {
   uploadDocumentForUser,
+  getDocumentForRequester,
+  verifyDocumentIntegrity,
+  getDocumentIntegrityStatusForUser,
 };

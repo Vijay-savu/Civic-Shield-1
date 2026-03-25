@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-const { uploadDocument } = require("./document.controller");
+const { uploadDocument, getDocumentIntegrity } = require("./document.controller");
 const { maxUploadSizeMb, uploadDir } = require("../../config/env");
 
 const router = express.Router();
@@ -32,5 +32,6 @@ const upload = multer({
 });
 
 router.post("/upload", upload.single("document"), uploadDocument);
+router.get("/:documentId/integrity", getDocumentIntegrity);
 
 module.exports = router;

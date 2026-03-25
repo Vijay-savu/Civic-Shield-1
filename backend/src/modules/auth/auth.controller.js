@@ -20,7 +20,12 @@ async function register(req, res, next) {
 
 async function login(req, res, next) {
   try {
-    const result = await loginWithPassword(req.body);
+    const result = await loginWithPassword({
+      ...req.body,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent"),
+    });
+
     return res.status(200).json({
       success: true,
       message: result.message,
@@ -36,7 +41,12 @@ async function login(req, res, next) {
 
 async function verifyOtp(req, res, next) {
   try {
-    const result = await verifyOtpAndIssueToken(req.body);
+    const result = await verifyOtpAndIssueToken({
+      ...req.body,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent"),
+    });
+
     return res.status(200).json({
       success: true,
       message: "MFA verification successful",

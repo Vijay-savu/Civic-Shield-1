@@ -12,5 +12,6 @@ module.exports = {
   loginRateLimitWindowMinutes: Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MINUTES || 15),
   maxUploadSizeMb: Number(process.env.MAX_UPLOAD_SIZE_MB || 5),
   uploadDir: process.env.UPLOAD_DIR || "uploads/documents",
+  eligibilityIncomeThreshold: Number(process.env.ELIGIBILITY_INCOME_THRESHOLD || 250000),
   nodeEnv: process.env.NODE_ENV || "development",
 };

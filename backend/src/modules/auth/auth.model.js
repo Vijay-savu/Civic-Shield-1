@@ -30,6 +30,19 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    failedLoginCount: {
+      type: Number,
+      default: 0,
+    },
+    riskScore: {
+      type: String,
+      enum: ["Low", "Medium", "High"],
+      default: "Low",
+    },
+    lastFailedLoginAt: {
+      type: Date,
+      default: null,
+    },
     lastLoginAt: {
       type: Date,
       default: null,
